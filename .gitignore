@@ -1,4 +1,7 @@
-.venv/
+.env
 __pycache__/
-config.py
-bot_db.sqlite
+venv/
+.venv/
+*.db
+.idea/
+.vscode/
