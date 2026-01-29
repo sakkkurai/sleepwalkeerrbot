@@ -9,6 +9,7 @@ from database.core import init_db
 from middleware.album import AlbumMiddleware
 from middleware.ban_middleware import BanMiddleware
 from middleware.register_check import RegisterCheckMiddleware
+from middleware.no_admin_buttons import NoButtonsInAdminChatMiddleware
 from handlers import submission, user_profile, admin, help, other
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +24,8 @@ async def main():
         token=config.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+
+    bot.session.middleware(NoButtonsInAdminChatMiddleware(config.MODERATION_CHAT_ID))
     
     dp = Dispatcher()
     dp.message.outer_middleware(BanMiddleware())
@@ -35,7 +38,6 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(help.router)
     dp.include_router(other.router)
-
 
     dp.startup.register(on_startup)
 

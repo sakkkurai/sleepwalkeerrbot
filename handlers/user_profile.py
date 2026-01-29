@@ -44,7 +44,7 @@ async def cmd_start(message: types.Message, command: CommandObject):
                         await message.answer(
                             "👋 <b>Привет!</b>\n\n"
                             "<i>Я — бот для предложки. Хочешь, чтобы твои фото попали в канал?</i> 📸\n\n"
-                            "👇 <b>Всё просто:</b> <i>отправь мне фото или видео прямо в этот чат, и мы начнём!>/i>",
+                            "👇 <b>Всё просто:</b> <i>отправь мне фото или видео прямо в этот чат, и мы начнём!</i>",
                             reply_markup=keyboard
                         )
 
@@ -96,7 +96,7 @@ async def info(message: types.Message):
         )
     await message.answer(text, reply_markup=get_github_kb())
 
-@router.message(Command("profile"))
+@router.message(F.chat.type == "private", Command("profile"))
 @router.message(F.text == "👤 Профиль")
 async def cmd_profile(message: types.Message):
     async with async_session_maker() as session:
@@ -123,7 +123,7 @@ async def cmd_profile(message: types.Message):
         await message.answer(text, reply_markup=get_edit_profile_kb())
 
 @router.message(F.text == "👤 Изменить имя")
-@router.message(Command("set_name"))
+@router.message(F.chat.type == "private", Command("set_name"))
 async def start_new_name(message: types.Message, state: FSMContext):
     await message.answer(
         "<b>👤 Введи новое имя.</b>\n\n"
@@ -132,7 +132,7 @@ async def start_new_name(message: types.Message, state: FSMContext):
     await state.set_state(UserState.set_username)
 
 @router.message(F.text == "✏️ Изменить описание")
-@router.message(Command("set_desc"))
+@router.message(F.chat.type == "private", Command("set_desc"))
 async def start_set_desc(message: types.Message, state: FSMContext):
     await message.answer(
     "✏️ <b>Напиши пару слов о себе.</b>\n\n"
