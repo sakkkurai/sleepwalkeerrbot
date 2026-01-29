@@ -1,6 +1,7 @@
 from aiogram import Router, F, Bot, types
 from aiogram.filters import CommandObject, Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, FSInputFile
+from aiogram.utils.chat_action import ChatActionSender
 from sqlalchemy import select, update
 from aiogram import html
 
@@ -8,11 +9,14 @@ from config import config
 from database.core import async_session_maker
 from database.models import User, Post
 from keyboards.inline import AdminCallback
-from states import AdminState
+from datetime import datetime
 from aiogram.fsm.context import FSMContext
+from aiogram.enums import ChatAction
 from utils.channel_utils import send_post_to_channel
-from keyboards.inline import get_admin_keyboard
-from utils.admin_utils import send_post_to_moderation
+import sys
+import asyncio
+import io
+import os
 
 router = Router()
 
@@ -294,4 +298,147 @@ async def cmd_unban_user(message: types.Message, command: CommandObject, bot: Bo
         try:
             await bot.send_message(target_id, "✅ <b>Ваш аккаунт был разблокирован!</b>\nНе нарушайте!\n\n")
         except:
-            pass 
+            pass
+
+@router.message(Command("sh", "shell"))
+async def cmd_shell(message: types.Message, command: CommandObject):
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
+        return
+
+    cmd = command.args
+    if not cmd:
+        await message.answer("Введите команду, например: <code>/sh ls -la</code>")
+        return
+
+    await message.answer(f"⏳ Выполняю: <code>{html.quote(cmd)}</code>...")
+
+    process = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    stdout, stderr = await process.communicate()
+    
+    output = stdout.decode().strip()
+    error = stderr.decode().strip()
+
+    text = ""
+    if output:
+        text += f"<b>Output:</b>\n<pre>{html.quote(output)}</pre>\n"
+    if error:
+        text += f"<b>Error:</b>\n<pre>{html.quote(error)}</pre>"
+    
+    if not text:
+        text = "<i>(Команда выполнена без вывода)</i>"
+
+    if len(text) > 4000:
+        from aiogram.types import BufferedInputFile
+        file = BufferedInputFile(text.encode(), filename="output.txt")
+        await message.answer_document(file, caption="Вывод слишком длинный, вот файл.")
+    else:
+        await message.answer(text)
+
+@router.message(Command("py", "python"))
+async def cmd_exec_python(message: types.Message, command: CommandObject):
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
+        return
+
+    code = command.args
+    if not code:
+        await message.answer("Напиши код, например: <code>/py print(2+2)</code>")
+        return
+
+    old_stdout = sys.stdout
+    redirected_output = sys.stdout = io.StringIO()
+
+    try:
+        func_code = (
+            "async def __ex():\n" +
+            "\n".join(f"    {line}" for line in code.split("\n")) +
+            "\n    return locals()"
+        )
+        
+        local_vars = {
+            "message": message,
+            "bot": message.bot,
+            "config": config,
+            "os": os,
+            "sys": sys,
+        }
+        
+        exec(func_code, globals(), local_vars)
+        await local_vars["__ex"]()
+        
+    except Exception as e:
+        await message.answer(f"❌ <b>Ошибка:</b>\n<code>{html.quote(str(e))}</code>")
+        return
+    finally:
+        sys.stdout = old_stdout
+
+    output = redirected_output.getvalue()
+    
+    if output:
+        if len(output) > 4000:
+             await message.answer("Вывод слишком большой.")
+        else:
+             await message.answer(f"🐍 <b>Результат:</b>\n<pre>{html.quote(output)}</pre>")
+    else:
+        await message.answer("🐍 Код выполнен (вывода нет).")
+
+@router.message(Command("clean_kb"))
+async def clean_keyboard(message: types.Message):
+    if message.chat.id != config.MODERATION_CHAT_ID:
+        await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
+        return
+
+    await message.answer(
+        "<b>🖕🏻 Клавиатура удалена.</b>", 
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
+@router.message(Command("export_db"))
+async def cmd_export_db(message: types.Message):
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
+        return
+
+    db_url = config.DB_URL
+        
+    if ":///" in db_url:
+        db_path = db_url.split(":///")[-1]
+    else:
+        db_path = db_url
+
+    if not os.path.exists(db_path):
+        await message.answer(
+            f"❌ <b>Ошибка экспорта!</b>\n\n"
+            f"Я смотрю в конфиг и вижу путь:\n<code>{db_path}</code>\n"
+            f"Но файла там нет! 😱\n\n"
+            f"<i>Текущий DB_URL:</i> {html.quote(db_url)}"
+        )
+        return
+
+    try:
+        status = await message.answer("<b>⏳ Загружаю базу данных...</b>")
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_DOCUMENT)
+
+        async with ChatActionSender.upload_document(chat_id=message.chat.id, bot=message.bot, initial_sleep=0):
+            backup_file = FSInputFile(db_path)
+            
+            await message.answer_document(
+                backup_file,
+                caption=(
+                    f"📦 <b>Бэкап базы данных</b>\n"
+                    f"🗄 <b>Источник:</b> .env\n"
+                    f"📍 <b>Путь:</b> <code>{db_path}</code>\n"
+                    f"📅 <b>Дата:</b> {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+                )
+            )
+            await status.delete()
+
+    except Exception as e:
+        await message.answer(f"❌ Не удалось отправить файл:\n<code>{e}</code>")

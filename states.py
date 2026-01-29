@@ -6,7 +6,3 @@ class UserState(StatesGroup):
     submit_content = State()
     confirm_sending = State()
     send_msg_to_moderation = State()
-
-
-class AdminState(StatesGroup):
-    editing_caption = State()

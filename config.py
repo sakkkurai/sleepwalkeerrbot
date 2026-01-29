@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 
-version = 2.00
+version = 2.1
 
 class Settings(BaseSettings):
     
@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DISCUSSION_CHAT_ID: int
     MODERATION_CHAT_ID: int
     
-    ADMIN_IDS: str
+    ADMIN_IDS: list[int]
     DB_URL: str
 
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')

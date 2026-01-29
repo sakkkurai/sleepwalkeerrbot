@@ -8,6 +8,7 @@ from database.models import User, Post
 from states import UserState
 from utils.admin_utils import send_post_to_moderation
 from keyboards.reply import get_skip_cancel_kb, get_confirm_kb, get_main_reply_keyboard
+from aiogram.utils.chat_action import ChatActionSender
 
 router = Router()
 
@@ -135,39 +136,36 @@ async def confirm_and_send(message: types.Message, state: FSMContext):
         await message.answer("<i>Ошибка. Пост не найден.</i>")
         await state.clear()
         return
-
     status_msg = await message.answer("⏳ <b>Отправляю пост...</b>\n<i>Пожалуйста, подождите.</i>", reply_markup=None)
 
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
+    async with ChatActionSender.upload_photo(chat_id=message.chat.id, bot=message.bot, initial_sleep=0):
+        
+        async with async_session_maker() as session:
+            post = await session.get(Post, post_id)
+            if post:
+                post.status = "pending"
+                await session.commit()
+                success = await send_post_to_moderation(message.bot, post_id)
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
 
-    async with async_session_maker() as session:
-        post = await session.get(Post, post_id)
-        if post:
-            post.status = "pending"
-            await session.commit()
-            
-            success = await send_post_to_moderation(message.bot, post_id)
-
-            try:
-                await status_msg.delete()
-            except:
-                pass
-
-            if success:
-                await message.answer(
-                    f"✅ <b>Пост #{post_id} успешно отправлен!</b>\n<i>Спасибо, что присылаете контент! 😌</i>",
-                    reply_markup=get_main_reply_keyboard()
-                )
+                if success:
+                    await message.answer(
+                        f"✅ <b>Пост #{post_id} успешно отправлен!</b>\n<i>Спасибо, что присылаете контент! 😌</i>",
+                        reply_markup=get_main_reply_keyboard()
+                    )
+                else:
+                    await message.answer(
+                        "<i>❌ Произошла ошибка при отправке админам.</i>", 
+                        reply_markup=get_main_reply_keyboard()
+                    )
             else:
-                await message.answer(
-                    "<i>❌ Произошла ошибка при отправке админам.</i>", 
-                    reply_markup=get_main_reply_keyboard()
-                )
-        else:
-            try:
-                await status_msg.delete()
-            except:
-                pass
-            await message.answer("Пост не найден в базе.", reply_markup=get_main_reply_keyboard())
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
+                await message.answer("Пост не найден в базе.", reply_markup=get_main_reply_keyboard())
 
     await state.clear()
