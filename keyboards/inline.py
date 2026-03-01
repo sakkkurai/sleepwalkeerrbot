@@ -36,7 +36,17 @@ def get_github_kb():
         [
             InlineKeyboardButton(
                 text="🐈 Исходный код на GitHub", 
-                url="https://github.com/svkkkurai/sleepwalkeerrbot"
+                url="https://github.com/sakkkur0x1/sleepwalkeerrbot"
+            )
+        ]
+    ])
+
+def get_reply_to_moder_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(
+            text="✍️ Ответить",
+            callback_data="msg_from_support_reply"
             )
         ]
     ])

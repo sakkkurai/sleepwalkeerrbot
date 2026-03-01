@@ -17,6 +17,7 @@ import sys
 import asyncio
 import io
 import os
+from keyboards.inline import get_reply_to_moder_kb
 
 router = Router()
 
@@ -212,7 +213,7 @@ async def cmd_admin_reply(message: types.Message, command: CommandObject, bot: B
                 f"<i>👇🏻 Чтобы ответить, воспользуйся кнопкой ниже.</i>"
             )
             
-            await bot.send_message(target_id, text_to_send)
+            await bot.send_message(target_id, text_to_send, reply_markup=get_reply_to_moder_kb())
             
             await message.answer(
                 f"<i>✅ Сообщение отправлено пользователю <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a>.</i>"

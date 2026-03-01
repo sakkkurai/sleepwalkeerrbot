@@ -3,6 +3,8 @@ from aiogram.fsm.context import FSMContext
 from keyboards.reply import get_help_kb, get_main_reply_keyboard, get_back_kb
 from states import UserState
 from config import config
+from typing import Union
+
 
 router = Router()
 
@@ -11,14 +13,21 @@ async def cmd_help(msg: types.Message):
     await msg.answer("<i>🧐 Чем могу помочь?</i>", reply_markup=get_help_kb())
 
 
-
-
-
+@router.callback_query(F.data == "msg_from_support_reply")
 @router.message(F.text == "👨‍💻 Связаться с поддержкой")
-async def contact_with_moder(msg: types.Message, state: FSMContext):
-    await msg.answer("<b>🐙 Напишите ваше сообщение.</b>\n<i>Оно будет отправлено модераторам.</i>", reply_markup=get_back_kb())
-    await state.set_state(UserState.send_msg_to_moderation)
+async def contact_with_moder(event: Union[types.Message, types.CallbackQuery], state: FSMContext):
 
+    message = event if isinstance(event, types.Message) else event.message
+
+    if isinstance(event, types.CallbackQuery):
+        await event.answer()
+
+    await message.answer(
+        "<b>🐙 Напишите ваше сообщение.</b>\n<i>Оно будет отправлено модераторам.</i>", 
+        reply_markup=get_back_kb()
+    )
+    await state.set_state(UserState.send_msg_to_moderation)
+    
 
 @router.message(UserState.send_msg_to_moderation)
 async def proccess_user_msg_to_moderation(msg: types.Message, state: FSMContext, bot: Bot):

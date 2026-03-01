@@ -33,5 +33,11 @@ class RegisterCheckMiddleware(BaseMiddleware):
                 session.add(new_user)
                 await session.commit()
                 print(f"🆕 Авто-регистрация: {tg_user.full_name} ({user_id})")
+            else:
+                if user.username != tg_user.username:
+                    user.username = tg_user.username
+                    await session.commit()
+                    print(f"🔄 Юзернейм обновлен для {user_id}: {tg_user.username}")
+
 
         return await handler(event, data)
