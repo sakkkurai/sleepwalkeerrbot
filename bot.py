@@ -7,8 +7,7 @@ from aiogram.enums import ParseMode
 from config import config
 from database.core import init_db
 from middleware.album import AlbumMiddleware
-from middleware.ban_middleware import BanMiddleware
-from middleware.register_check import RegisterCheckMiddleware
+from middleware.user_control import UserControlMiddleware
 from middleware.no_admin_buttons import NoButtonsInAdminChatMiddleware
 from handlers import submission, user_profile, admin, help, other
 
@@ -28,10 +27,9 @@ async def main():
     bot.session.middleware(NoButtonsInAdminChatMiddleware(config.MODERATION_CHAT_ID))
     
     dp = Dispatcher()
-    dp.message.outer_middleware(BanMiddleware())
-    dp.callback_query.outer_middleware(BanMiddleware())
-    dp.message.outer_middleware(RegisterCheckMiddleware())
-    dp.callback_query.outer_middleware(RegisterCheckMiddleware())
+    
+    dp.message.outer_middleware(UserControlMiddleware())
+    dp.callback_query.outer_middleware(UserControlMiddleware())
     dp.message.middleware(AlbumMiddleware())
     dp.include_router(user_profile.router)
     dp.include_router(submission.router)

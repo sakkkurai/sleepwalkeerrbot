@@ -36,7 +36,7 @@ def get_github_kb():
         [
             InlineKeyboardButton(
                 text="🐈 Исходный код на GitHub", 
-                url="https://github.com/sakkkur0x1/sleepwalkeerrbot"
+                url="https://github.com/sakkkurai/sleepwalkeerrbot"
             )
         ]
     ])
