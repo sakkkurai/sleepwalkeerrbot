@@ -11,27 +11,36 @@ class User(Base):
     __tablename__ = "users"
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    username: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str] = mapped_column(String(255))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    banned_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    banned_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
     posts: Mapped[list["Post"]] = relationship(back_populates="author")
-    bans: Mapped[list["Ban"]] = relationship(back_populates="user")
+    ban_logs: Mapped[list["BanLog"]] = relationship(back_populates="user")
 
-class Ban(Base):
-    __tablename__ = "bans"
+class BanLog(Base):
+    __tablename__ = "ban_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"))
-    ban_type: Mapped[str] = mapped_column(String(20))
-    until_date: Mapped[datetime] = mapped_column(DateTime)
-    reason: Mapped[Optional[str]] = mapped_column(Text)
+    user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    user_username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    banned_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    banned_by_admin_id: Mapped[int] = mapped_column(BigInteger)
+    banned_by_admin_name: Mapped[str] = mapped_column(String(255))
+    banned_by_admin_username: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    
+    ban_time: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
-    user: Mapped["User"] = relationship(back_populates="bans")
+    user: Mapped["User"] = relationship(back_populates="ban_logs")
 
 class Post(Base):
     __tablename__ = "posts"

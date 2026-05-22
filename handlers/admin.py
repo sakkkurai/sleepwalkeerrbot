@@ -1,3 +1,5 @@
+import re
+
 from aiogram import Router, F, Bot, types
 from aiogram.filters import CommandObject, Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, FSInputFile
@@ -7,9 +9,9 @@ from aiogram import html
 
 from config import config
 from database.core import async_session_maker
-from database.models import User, Post
+from database.models import User, Post, BanLog
 from keyboards.inline import AdminCallback
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ChatAction
 from utils.channel_utils import send_post_to_channel
@@ -144,7 +146,6 @@ async def admin_ban_cancel(query: CallbackQuery, callback_data: AdminCallback):
     await query.message.edit_reply_markup(reply_markup=get_admin_keyboard(post_id))
 
 
-
 @router.callback_query(AdminCallback.filter(F.action == "confirm_ban"))
 async def admin_ban_execute(query: CallbackQuery, callback_data: AdminCallback, bot: Bot):
     post_id = callback_data.post_id
@@ -157,17 +158,35 @@ async def admin_ban_execute(query: CallbackQuery, callback_data: AdminCallback, 
 
         user = await session.get(User, post.user_id)
         if user:
-            user.is_banned = True 
+
+            banned_until_date = None
+            reason_text = f"Вы были заблокированы за отправку поста {post_id}"
+
+            user.banned_until = banned_until_date
+            user.banned_reason = reason_text
             post.status = "rejected"
+            
+            ban_log = BanLog(
+                user_id=user.user_id,
+                reason=reason_text,
+                banned_until=None,
+                banned_by_admin_id=query.from_user.id,
+                banned_by_admin_name=query.from_user.full_name,
+                banned_by_admin_username=query.from_user.username
+            )
+            session.add(ban_log)
             await session.commit()
             
             try:
-                await bot.send_message(user.user_id, "<b>⛔️ Вы были заблокированы в боте.</b>\nХотите обжаловать блокировку? Свяжитесь с администратором канала — ссылка в закрепе.")
+                await bot.send_message(
+                    chat_id=user.user_id, 
+                    text="<b>⛔️ Вы были заблокированы в боте навсегда.</b>\nХотите обжаловать блокировку? Свяжитесь с администратором канала — ссылка в закрепе."
+                )
             except:
                 pass
             
             await query.message.edit_text(
-                f"{query.message.html_text}\n\n🔨 <b>ПОЛЬЗОВАТЕЛЬ ЗАБАНЕН администратором {html.quote(query.from_user.full_name)}</b>",
+                f"{query.message.html_text}\n\n🔨 <b>ПОЛЬЗОВАТЕЛЬ ЗАБАНЕН НАВСЕГДА администратором {html.quote(query.from_user.full_name)}</b>",
                 reply_markup=None
             )
             await query.answer("✅ Пользователь забанен!", show_alert=True)
@@ -221,8 +240,6 @@ async def cmd_admin_reply(message: types.Message, command: CommandObject, bot: B
         except Exception as e:
             await message.answer(f"❌ Не удалось отправить сообщение (юзер заблокировал бота?)\nОшибка: {e}")
 
-
-
 @router.message(Command("ban"))
 async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bot):
     if message.chat.id != config.MODERATION_CHAT_ID:
@@ -230,37 +247,106 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
         return 
 
     if not command.args:
-        await message.answer("⚠️ Использование: <code>/ban ID_ПОЛЬЗОВАТЕЛЯ</code>")
+        await message.answer(
+            "⚠️ <b>Использование:</b>\n"
+            "<code>/ban ID [время] [причина]</code>\n\n"
+            "⏳ <b>Примеры времени:</b> <code>10m</code> (минуты), <code>2h</code> (часы), <code>5d</code> (дни), <code>3w</code> (недели).\n"
+            "🔒 Без указания времени — бан навсегда."
+        )
         return
 
+    args = command.args.strip().split()
+    
     try:
-        target_id = int(command.args.strip())
+        target_id = int(args[0])
     except ValueError:
         await message.answer("<b>❌ ID должен быть числом.</b>")
         return
 
-    async with async_session_maker() as session:
+    banned_until_date = None
+    time_str = "навсегда"
+    reason_text = None
+    reason_start_idx = 1
 
+    if len(args) > 1:
+        time_match = re.match(r"^(\d+)([mhdw])$", args[1].lower())
+        if time_match:
+            amount = int(time_match.group(1))
+            unit = time_match.group(2)
+            
+            now = datetime.utcnow()
+            if unit == 'm':
+                banned_until_date = now + timedelta(minutes=amount)
+                time_str = f"на {amount} мин."
+            elif unit == 'h':
+                banned_until_date = now + timedelta(hours=amount)
+                time_str = f"на {amount} ч."
+            elif unit == 'd':
+                banned_until_date = now + timedelta(days=amount)
+                time_str = f"на {amount} дн."
+            elif unit == 'w':
+                banned_until_date = now + timedelta(weeks=amount)
+                time_str = f"на {amount} нед."
+                
+            reason_start_idx = 2 
+        elif args[1].lower() in ['max', 'm', 'perm']:
+            reason_start_idx = 2
+
+    if len(args) > reason_start_idx:
+        reason_text = " ".join(args[reason_start_idx:])
+
+    async with async_session_maker() as session:
         user = await session.get(User, target_id)
         
         if not user:
             await message.answer("<b>❌ Пользователь не найден в базе.</b>")
             return
 
-        if user.is_banned:
-            await message.answer("<b>ℹ️ Пользователь уже и так в бане.</b>")
+        if user.banned_reason is not None and (user.banned_until is None or user.banned_until > datetime.utcnow()):
+            await message.answer("<b>ℹ️ Пользователь уже находится в активном бане.</b>")
             return
 
-        user.is_banned = True
+        user.banned_until = banned_until_date
+        user.banned_reason = reason_text or "Причина не указана"
+
+        ban_log = BanLog(
+            user_id=user.user_id,
+            user_name=user.full_name,
+            user_username=user.username,
+            reason=reason_text or "Причина не указана",
+            banned_until=banned_until_date,
+            banned_by_admin_id=message.from_user.id,
+            banned_by_admin_name=message.from_user.full_name,
+            banned_by_admin_username=message.from_user.username
+        )
+        session.add(ban_log)
         await session.commit()
         
-        await message.answer(
-            f"🔨 Пользователь <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a> забанен."
-        )
-        try:
-            await bot.send_message(user.user_id, "<b>⛔️ Вы были заблокированы в боте.</b>\nХотите обжаловать блокировку? Свяжитесь с администратором канала — ссылка в закрепе.")
-        except:
-            pass
+    admin_reply = f"🔨 Пользователь <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a> заблокирован <b>{time_str}</b>"
+    if banned_until_date: 
+        admin_reply += f" (до {banned_until_date.strftime('%d.%m.%Y %H:%M')} UTC)"
+    
+    if reason_text:
+        admin_reply += f"\n📝 Причина: <i>{html.quote(reason_text)}</i>"
+        
+    await message.answer(admin_reply)
+    
+    try:
+        user_text = f"<b>⛔️ Вы были заблокированы в боте {time_str}</b>"
+        
+        if banned_until_date:
+            user_text += f" (до {banned_until_date.strftime('%d.%m.%Y %H:%M')} UTC)."
+        else:
+            user_text += "."
+            
+        if reason_text:
+            user_text += f"\n📝 Причина: {html.quote(reason_text)}"
+            
+        user_text += "\n\nХотите обжаловать блокировку? Свяжитесь с администратором — актуальный контакт находится в описании канала."
+        
+        await bot.send_message(chat_id=user.user_id, text=user_text)
+    except:
+        pass
 
 
 @router.message(Command("unban"))
@@ -286,20 +372,22 @@ async def cmd_unban_user(message: types.Message, command: CommandObject, bot: Bo
             await message.answer("<b>❌ Пользователь с таким ID не найден в базе.</b>")
             return
 
-        if not user.is_banned:
+        if user.banned_reason is None:
             await message.answer("<b>ℹ️ Этот пользователь и так не забанен.</b>")
             return
 
-        user.is_banned = False
+        user.banned_until = None
+        user.banned_reason = None
         await session.commit()
         
         await message.answer(
             f"✅ Пользователь <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a> разбанен!"
         )
         try:
-            await bot.send_message(target_id, "✅ <b>Ваш аккаунт был разблокирован!</b>\nНе нарушайте!\n\n")
+            await bot.send_message(target_id, "✅ <b>Ваш аккаунт был разблокирован модератором.</b>")
         except:
             pass
+
 
 @router.message(Command("sh", "shell"))
 async def cmd_shell(message: types.Message, command: CommandObject):

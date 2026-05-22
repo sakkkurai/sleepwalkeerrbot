@@ -9,7 +9,7 @@ from database.core import init_db
 from middleware.album import AlbumMiddleware
 from middleware.user_control import UserControlMiddleware
 from middleware.no_admin_buttons import NoButtonsInAdminChatMiddleware
-from handlers import submission, user_profile, admin, help, other
+from handlers import errors, submission, user_profile, admin, help, other
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,7 +27,7 @@ async def main():
     bot.session.middleware(NoButtonsInAdminChatMiddleware(config.MODERATION_CHAT_ID))
     
     dp = Dispatcher()
-    
+    dp.include_router(errors.router)
     dp.message.outer_middleware(UserControlMiddleware())
     dp.callback_query.outer_middleware(UserControlMiddleware())
     dp.message.middleware(AlbumMiddleware())
