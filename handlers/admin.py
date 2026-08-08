@@ -6,11 +6,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from aiogram.utils.chat_action import ChatActionSender
 from sqlalchemy import select, update
 from aiogram import html
+from aiogram.exceptions import TelegramBadRequest
 
 from config import config
 from database.core import async_session_maker
 from database.models import User, Post, BanLog
-from keyboards.inline import AdminCallback
+from keyboards.inline import AdminCallback, AdminToggleCallback, get_profile_kb
 from datetime import datetime, timedelta
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ChatAction
@@ -34,8 +35,7 @@ async def admin_profile_handler(query: CallbackQuery, callback_data: AdminCallba
             return
 
         author = await session.get(User, post.user_id)
-        
-    
+
     text = (
         f"🕵️‍♂️ ИНФО ОБ АВТОРЕ\n"
         f"➖➖➖➖➖➖➖\n"
@@ -45,7 +45,7 @@ async def admin_profile_handler(query: CallbackQuery, callback_data: AdminCallba
         f"📅 Рег: {author.created_at.strftime('%d.%m.%Y')}\n\n"
         f"📝 Био:\n{html.quote(author.description or 'Не указано')}"
     )
-    
+
     await query.answer(text, show_alert=True)
 
 
@@ -58,10 +58,14 @@ async def admin_reject_handler(query: CallbackQuery, callback_data: AdminCallbac
         if not post:
             await query.answer("Пост уже удален или не найден", show_alert=True)
             return
-        
+
+        if post.status != "pending":
+            await query.answer("Пост уже обработан", show_alert=True)
+            return
+
         post.status = "rejected"
         await session.commit()
-        
+
         try:
             await bot.send_message(
                 chat_id=post.user_id,
@@ -86,15 +90,28 @@ async def admin_approve_handler(query: CallbackQuery, callback_data: AdminCallba
             await query.answer("Пост не найден", show_alert=True)
             return
 
+        if post.status != "pending":
+            await query.answer("Пост уже обработан", show_alert=True)
+            return
+
         post.status = "approved"
         await session.commit()
-        
+
         author = await session.get(User, post.user_id)
-        
+
         channel_message_id = None
         if author:
-            channel_message_id = await send_post_to_channel(bot, post, author)
-        
+            try:
+                channel_message_id = await send_post_to_channel(bot, post, author)
+            except Exception as e:
+                post.status = "pending"
+                await session.commit()
+                await query.answer(f"Ошибка отправки в канал: {e}", show_alert=True)
+                return
+
+            post.channel_message_id = channel_message_id
+            await session.commit()
+
         url_button = None
         if channel_message_id and config.CHANNEL_USERNAME:
             post_link = f"https://t.me/{config.CHANNEL_USERNAME}/{channel_message_id}"
@@ -109,13 +126,70 @@ async def admin_approve_handler(query: CallbackQuery, callback_data: AdminCallba
                 reply_markup=url_button
             )
         except:
-            pass 
+            pass
+        try:
+            await query.message.edit_text(
+                text=f"{query.message.html_text}\n\n🟢 <b>ОПУБЛИКОВАНО администратором {html.quote(query.from_user.full_name)}</b>",
+                reply_markup=url_button
+            )
+        except TelegramBadRequest:
+            pass
 
-    await query.message.edit_text(
-        text=f"{query.message.html_text}\n\n🟢 <b>ОПУБЛИКОВАНО администратором {html.quote(query.from_user.full_name)}</b>",
-        reply_markup=url_button
-    )
 
+@router.callback_query(AdminToggleCallback.filter())
+async def process_admin_toggle(query: CallbackQuery, callback_data: AdminToggleCallback):
+    if query.from_user.id != config.ADMIN_ID:
+        await query.answer("⛔ У вас нет прав для изменения статуса администраторов!", show_alert=True)
+        return
+
+    target_user_id = callback_data.user_id
+    action = callback_data.action
+
+    async with async_session_maker() as session:
+        user = await session.get(User, target_user_id)
+        if not user:
+            await query.answer("Пользователь не найден в базе данных!", show_alert=True)
+            return
+
+        if action == "promote":
+            user.is_admin = True
+            alert_text = f"👑 Пользователь {user.full_name} назначен администратором!"
+        elif action == "demote":
+            user.is_admin = False
+            alert_text = f"❌ Права администратора у {user.full_name} отозваны!"
+        else:
+            await query.answer("Неизвестное действие!")
+            return
+
+        await session.commit()
+
+        await query.answer(alert_text, show_alert=True)
+
+        username_text = f"@{html.quote(user.username)}" if user.username else "Не указано"
+        admin_status = "\n<b><i>👮🏻 Пользователь является администратором сообщества.</i></b>" if user.is_admin else ""
+
+
+        public_text = (
+            f"👤 <b>ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ {html.quote(user.full_name)}</b>\n"
+            f"➖➖➖➖➖➖➖➖\n"
+            f"🆔 <b>ID:</b> {user.user_id}\n"
+            f"🏷 <b>Юзернейм:</b> {username_text}\n"
+            f"📝 <b>О себе:</b> {html.quote(user.description or 'Не указано')}\n"
+            f"➖➖➖➖➖➖➖➖\n"
+            f"📅 <b>Регистрация:</b> {user.created_at.strftime('%d.%m.%Y')}"
+            f"{admin_status}"
+        )
+
+        new_kb = get_profile_kb(
+            target_user_id=user.user_id,
+            target_is_admin=user.is_admin,
+            viewer_id=query.from_user.id
+        )
+
+        try:
+            await query.message.edit_text(text=public_text, reply_markup=new_kb)
+        except TelegramBadRequest:
+            pass
 
 @router.callback_query(AdminCallback.filter(F.action == "ban_menu"))
 async def admin_ban_confirm(query: CallbackQuery, callback_data: AdminCallback):
@@ -123,7 +197,7 @@ async def admin_ban_confirm(query: CallbackQuery, callback_data: AdminCallback):
     confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="💀 ДА, ЗАБАНИТЬ НАВСЕГДА", 
+                text="💀 ДА, ЗАБАНИТЬ НАВСЕГДА",
                 callback_data=AdminCallback(action="confirm_ban", post_id=post_id).pack()
             )
         ],
@@ -134,7 +208,7 @@ async def admin_ban_confirm(query: CallbackQuery, callback_data: AdminCallback):
             )
         ]
     ])
-        
+
     await query.message.edit_reply_markup(reply_markup=confirm_kb)
 
 
@@ -142,18 +216,22 @@ async def admin_ban_confirm(query: CallbackQuery, callback_data: AdminCallback):
 async def admin_ban_cancel(query: CallbackQuery, callback_data: AdminCallback):
     post_id = callback_data.post_id
     from keyboards.inline import get_admin_keyboard
-    
+
     await query.message.edit_reply_markup(reply_markup=get_admin_keyboard(post_id))
 
 
 @router.callback_query(AdminCallback.filter(F.action == "confirm_ban"))
 async def admin_ban_execute(query: CallbackQuery, callback_data: AdminCallback, bot: Bot):
     post_id = callback_data.post_id
-    
+
     async with async_session_maker() as session:
         post = await session.get(Post, post_id)
         if not post:
             await query.answer("♿ Пост не найден", show_alert=True)
+            return
+
+        if post.status == "rejected":
+            await query.answer("Пост уже отклонён", show_alert=True)
             return
 
         user = await session.get(User, post.user_id)
@@ -165,7 +243,7 @@ async def admin_ban_execute(query: CallbackQuery, callback_data: AdminCallback, 
             user.banned_until = banned_until_date
             user.banned_reason = reason_text
             post.status = "rejected"
-            
+
             ban_log = BanLog(
                 user_id=user.user_id,
                 reason=reason_text,
@@ -176,15 +254,15 @@ async def admin_ban_execute(query: CallbackQuery, callback_data: AdminCallback, 
             )
             session.add(ban_log)
             await session.commit()
-            
+
             try:
                 await bot.send_message(
-                    chat_id=user.user_id, 
+                    chat_id=user.user_id,
                     text="<b>⛔️ Вы были заблокированы в боте навсегда.</b>\nХотите обжаловать блокировку? Свяжитесь с администратором канала — ссылка в закрепе."
                 )
             except:
                 pass
-            
+
             await query.message.edit_text(
                 f"{query.message.html_text}\n\n🔨 <b>ПОЛЬЗОВАТЕЛЬ ЗАБАНЕН НАВСЕГДА администратором {html.quote(query.from_user.full_name)}</b>",
                 reply_markup=None
@@ -198,7 +276,7 @@ async def admin_ban_execute(query: CallbackQuery, callback_data: AdminCallback, 
 async def cmd_admin_reply(message: types.Message, command: CommandObject, bot: Bot):
     if message.chat.id != config.MODERATION_CHAT_ID:
         message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
-        return 
+        return
 
     if not command.args:
         await message.answer("<b>⚠️ Использование:</b> <code>/reply ID ТЕКСТ СООБЩЕНИЯ</code>")
@@ -206,11 +284,11 @@ async def cmd_admin_reply(message: types.Message, command: CommandObject, bot: B
 
     try:
         args_split = command.args.split(maxsplit=1)
-        
+
         if len(args_split) < 2:
             await message.answer("<b>⚠️ Вы забыли написать текст сообщения.</b>")
             return
-            
+
         target_id = int(args_split[0])
         reply_text = args_split[1]
 
@@ -220,20 +298,20 @@ async def cmd_admin_reply(message: types.Message, command: CommandObject, bot: B
 
     async with async_session_maker() as session:
         user = await session.get(User, target_id)
-        
+
         if not user:
             await message.answer("<b>❌ Пользователь с таким ID не найден в базе.</b>")
             return
-            
+
         try:
             text_to_send = (
                 f"📨 <b>Сообщение от администратора:</b>\n"
                 f"<blockquote>{html.quote(reply_text)}</blockquote>\n\n"
                 f"<i>👇🏻 Чтобы ответить, воспользуйся кнопкой ниже.</i>"
             )
-            
+
             await bot.send_message(target_id, text_to_send, reply_markup=get_reply_to_moder_kb())
-            
+
             await message.answer(
                 f"<i>✅ Сообщение отправлено пользователю <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a>.</i>"
             )
@@ -244,7 +322,7 @@ async def cmd_admin_reply(message: types.Message, command: CommandObject, bot: B
 async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bot):
     if message.chat.id != config.MODERATION_CHAT_ID:
         await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
-        return 
+        return
 
     if not command.args:
         await message.answer(
@@ -256,7 +334,7 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
         return
 
     args = command.args.strip().split()
-    
+
     try:
         target_id = int(args[0])
     except ValueError:
@@ -273,7 +351,7 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
         if time_match:
             amount = int(time_match.group(1))
             unit = time_match.group(2)
-            
+
             now = datetime.utcnow()
             if unit == 'm':
                 banned_until_date = now + timedelta(minutes=amount)
@@ -287,8 +365,8 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
             elif unit == 'w':
                 banned_until_date = now + timedelta(weeks=amount)
                 time_str = f"на {amount} нед."
-                
-            reason_start_idx = 2 
+
+            reason_start_idx = 2
         elif args[1].lower() in ['max', 'm', 'perm']:
             reason_start_idx = 2
 
@@ -297,7 +375,7 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
 
     async with async_session_maker() as session:
         user = await session.get(User, target_id)
-        
+
         if not user:
             await message.answer("<b>❌ Пользователь не найден в базе.</b>")
             return
@@ -321,29 +399,29 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
         )
         session.add(ban_log)
         await session.commit()
-        
+
     admin_reply = f"🔨 Пользователь <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a> заблокирован <b>{time_str}</b>"
-    if banned_until_date: 
+    if banned_until_date:
         admin_reply += f" (до {banned_until_date.strftime('%d.%m.%Y %H:%M')} UTC)"
-    
+
     if reason_text:
         admin_reply += f"\n📝 Причина: <i>{html.quote(reason_text)}</i>"
-        
+
     await message.answer(admin_reply)
-    
+
     try:
         user_text = f"<b>⛔️ Вы были заблокированы в боте {time_str}</b>"
-        
+
         if banned_until_date:
             user_text += f" (до {banned_until_date.strftime('%d.%m.%Y %H:%M')} UTC)."
         else:
             user_text += "."
-            
+
         if reason_text:
             user_text += f"\n📝 Причина: {html.quote(reason_text)}"
-            
+
         user_text += "\n\nХотите обжаловать блокировку? Свяжитесь с администратором — актуальный контакт находится в описании канала."
-        
+
         await bot.send_message(chat_id=user.user_id, text=user_text)
     except:
         pass
@@ -353,7 +431,7 @@ async def cmd_manual_ban(message: types.Message, command: CommandObject, bot: Bo
 async def cmd_unban_user(message: types.Message, command: CommandObject, bot: Bot):
     if message.chat.id != config.MODERATION_CHAT_ID:
         await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
-        return 
+        return
 
     if not command.args:
         await message.answer("<i>⚠️ Использование:</i> <code>/unban ID_ПОЛЬЗОВАТЕЛЯ</code>")
@@ -367,7 +445,7 @@ async def cmd_unban_user(message: types.Message, command: CommandObject, bot: Bo
 
     async with async_session_maker() as session:
         user = await session.get(User, target_id)
-        
+
         if not user:
             await message.answer("<b>❌ Пользователь с таким ID не найден в базе.</b>")
             return
@@ -379,7 +457,7 @@ async def cmd_unban_user(message: types.Message, command: CommandObject, bot: Bo
         user.banned_until = None
         user.banned_reason = None
         await session.commit()
-        
+
         await message.answer(
             f"✅ Пользователь <a href='tg://user?id={target_id}'>{html.quote(user.full_name)}</a> разбанен!"
         )
@@ -391,7 +469,7 @@ async def cmd_unban_user(message: types.Message, command: CommandObject, bot: Bo
 
 @router.message(Command("sh", "shell"))
 async def cmd_shell(message: types.Message, command: CommandObject):
-    if message.from_user.id not in config.ADMIN_IDS:
+    if message.from_user.id != config.ADMIN_ID:
         await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
         return
 
@@ -409,7 +487,7 @@ async def cmd_shell(message: types.Message, command: CommandObject):
     )
 
     stdout, stderr = await process.communicate()
-    
+
     output = stdout.decode().strip()
     error = stderr.decode().strip()
 
@@ -418,7 +496,7 @@ async def cmd_shell(message: types.Message, command: CommandObject):
         text += f"<b>Output:</b>\n<pre>{html.quote(output)}</pre>\n"
     if error:
         text += f"<b>Error:</b>\n<pre>{html.quote(error)}</pre>"
-    
+
     if not text:
         text = "<i>(Команда выполнена без вывода)</i>"
 
@@ -431,7 +509,7 @@ async def cmd_shell(message: types.Message, command: CommandObject):
 
 @router.message(Command("py", "python"))
 async def cmd_exec_python(message: types.Message, command: CommandObject):
-    if message.from_user.id not in config.ADMIN_IDS:
+    if message.from_user.id != config.ADMIN_ID:
         await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
         return
 
@@ -449,7 +527,7 @@ async def cmd_exec_python(message: types.Message, command: CommandObject):
             "\n".join(f"    {line}" for line in code.split("\n")) +
             "\n    return locals()"
         )
-        
+
         local_vars = {
             "message": message,
             "bot": message.bot,
@@ -457,10 +535,10 @@ async def cmd_exec_python(message: types.Message, command: CommandObject):
             "os": os,
             "sys": sys,
         }
-        
+
         exec(func_code, globals(), local_vars)
         await local_vars["__ex"]()
-        
+
     except Exception as e:
         await message.answer(f"❌ <b>Ошибка:</b>\n<code>{html.quote(str(e))}</code>")
         return
@@ -468,7 +546,7 @@ async def cmd_exec_python(message: types.Message, command: CommandObject):
         sys.stdout = old_stdout
 
     output = redirected_output.getvalue()
-    
+
     if output:
         if len(output) > 4000:
              await message.answer("Вывод слишком большой.")
@@ -484,19 +562,19 @@ async def clean_keyboard(message: types.Message):
         return
 
     await message.answer(
-        "<b>🖕🏻 Клавиатура удалена.</b>", 
+        "<b>🖕🏻 Клавиатура удалена.</b>",
         reply_markup=ReplyKeyboardRemove()
     )
 
 
 @router.message(Command("export_db"))
 async def cmd_export_db(message: types.Message):
-    if message.from_user.id not in config.ADMIN_IDS:
+    if message.from_user.id != config.ADMIN_ID:
         await message.answer("<b>⛔️ Ты не можешь использовать эту команду.</b>")
         return
 
     db_url = config.DB_URL
-        
+
     if ":///" in db_url:
         db_path = db_url.split(":///")[-1]
     else:
@@ -517,7 +595,7 @@ async def cmd_export_db(message: types.Message):
 
         async with ChatActionSender.upload_document(chat_id=message.chat.id, bot=message.bot, initial_sleep=0):
             backup_file = FSInputFile(db_path)
-            
+
             await message.answer_document(
                 backup_file,
                 caption=(

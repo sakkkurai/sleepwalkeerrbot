@@ -1,10 +1,10 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 
-version = 2.5
+version = 2.6
 
 class Settings(BaseSettings):
-    
+
     BOT_TOKEN: SecretStr
     BOT_USERNAME: str
 
@@ -13,13 +13,10 @@ class Settings(BaseSettings):
 
     DISCUSSION_CHAT_ID: int
     MODERATION_CHAT_ID: int
-    
-    ADMIN_IDS: list[int]
+
+    ADMIN_ID: int
     DB_URL: str
 
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
-
-    def get_admin_ids(self) -> list[int]:
-        return [int(admin_id) for admin_id in self.ADMIN_IDS.split(',')]
 
 config = Settings()
