@@ -1,4 +1,6 @@
 import asyncio
+import os
+import psutil
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -23,9 +25,9 @@ async def main():
         token=config.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
-
+    process = psutil.Process(os.getpid())
     bot.session.middleware(NoButtonsInAdminChatMiddleware(config.MODERATION_CHAT_ID))
-    
+
     dp = Dispatcher()
     dp.include_router(errors.router)
     dp.message.outer_middleware(UserControlMiddleware())
@@ -39,11 +41,14 @@ async def main():
 
     dp.startup.register(on_startup)
 
-    
+
     print("🚀 Bot started, click Ctrl+C to stop.")
-    
+
+
     await bot.delete_webhook(drop_pending_updates=True)
+    print(f"RAM: {process.memory_info().rss / 1024**2:.2f} MB")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     try:

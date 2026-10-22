@@ -1,0 +1,10 @@
+.env
+__pycache__/
+venv/
+.venv/
+.idea/
+.vscode/
+.git
+README.md
+banner.png
+alemblic.ini

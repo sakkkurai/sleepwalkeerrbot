@@ -46,6 +46,11 @@ async def error_handler(event: ErrorEvent, bot: Bot):
                 document=file_data,
                 caption=f"🚨 <b>Критическая ошибка:</b> {html.quote(type(exception).__name__)}. Вывод слишком длинный, логи прикреплены файлом."
             )
-
     except Exception as e:
         print(f"Не удалось отправить лог ошибки в чат: {e}")
+        print(f"Исходная ошибка: {type(exception).__name__}: {exception}")
+        traceback.print_exception(
+            type(exception),
+            exception,
+            exception.__traceback__
+        )
