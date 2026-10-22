@@ -1,3 +1,6 @@
 aiogram
 sqlalchemy
 psutil
+pydantic-settings
+greenlet
+aiosqlite
