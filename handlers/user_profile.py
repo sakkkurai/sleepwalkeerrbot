@@ -1,9 +1,11 @@
 import math
+import os
 
-from aiogram import Router, types, F
+from aiogram import Bot, Router, types, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
+import psutil
 from sqlalchemy import select, update
 
 from config import config
@@ -16,10 +18,14 @@ from datetime import datetime
 from keyboards.inline import get_github_kb, get_profile_kb
 from keyboards.reply import get_edit_profile_kb, get_main_reply_keyboard, get_back_to_menu_kb
 from config import version
+import time
 
 router = Router()
 BOT_START_TIME = datetime.now()
 POSTS_PER_PAGE = 5
+psutil.cpu_percent(interval=None)
+_proc = psutil.Process(os.getpid())
+_proc.cpu_percent(interval=None)
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, command: CommandObject):
@@ -238,11 +244,14 @@ async def back_to_menu(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("<i>😌 Вы вернулись в меню.</i>", reply_markup=get_main_reply_keyboard())
 
-@router.message(Command("info"))
-async def info(message: types.Message):
+@router.message(Command("status"))
+async def info(message: types.Message, bot: Bot):
+    api_ms = await measure_api_ping(bot)
+
     text = (
             f"<b>ℹ️ Версия: {version}</b>\n"
-            f"<b>🚀 Аптайм: {get_uptime_str()}</b>\n\n"
+            f"<b>🚀 Аптайм: {get_uptime_str()}</b>\n"
+            f"<b>{get_usage_str(api_ms)}</b>\n\n"
             f"<i>👇🏻 Ознакомиться с исходным кодом можно по ссылке ниже.</i>"
         )
     await message.answer(text, reply_markup=get_github_kb())
@@ -379,3 +388,23 @@ def get_uptime_str():
     secs = seconds % 60
 
     return f"{days}д {hours}ч {minutes}м {secs}с"
+
+def get_usage_str(api_ms: float) -> str:
+    cpu = psutil.cpu_percent(interval=None)
+    ram = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    bot_ram = _proc.memory_info().rss / 1024 ** 2
+    bot_cpu = _proc.cpu_percent(interval=None)
+
+    return (
+        f"<b>📡 Пинг API:</b> {api_ms:.0f} мс\n"
+        f"<b>🖥 CPU:</b> {cpu:.1f}%\n"
+        f"<b>🧠 RAM:</b> {ram.used / 1024**3:.2f} / {ram.total / 1024**3:.2f} ГБ ({ram.percent:.0f}%)\n"
+        f"<b>💾 Диск:</b> {disk.used / 1024**3:.1f} / {disk.total / 1024**3:.1f} ГБ ({disk.percent:.0f}%)\n"
+        f"<b>🤖 Бот:</b> {bot_ram:.0f} МБ RAM, {bot_cpu:.1f}% CPU"
+    )
+
+async def measure_api_ping(bot) -> float:
+    start = time.perf_counter()
+    await bot.get_me()
+    return (time.perf_counter() - start) * 1000

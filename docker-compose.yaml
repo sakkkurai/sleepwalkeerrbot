@@ -1,6 +1,6 @@
 services:
   bot:
-    image: sakkkurai/sleepwalkeerrbot:1.0.1
+    image: sakkkurai/sleepwalkeerrbot:1.0.2
     restart: always
 
     env_file: .env
