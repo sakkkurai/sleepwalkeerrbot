@@ -106,7 +106,7 @@ async def admin_approve_handler(query: CallbackQuery, callback_data: AdminCallba
             except Exception as e:
                 post.status = "pending"
                 await session.commit()
-                await query.answer(f"Ошибка отправки в канал: {e}", show_alert=True)
+                await query.answer(f"Ошибка отправки в канал: {str(e)[:150]}", show_alert=True)
                 return
 
             post.channel_message_id = channel_message_id
