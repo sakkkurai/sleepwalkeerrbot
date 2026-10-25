@@ -1,0 +1,8 @@
+services:
+  bot:
+    image: sakkkurai/sleepwalkeerrbot:1.0.0
+    restart: always
+
+    env_file: .env
+    volumes:
+      - ./database:/data

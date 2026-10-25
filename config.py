@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 
-version = 2.6
+version = 2.7
 
 class Settings(BaseSettings):
 
